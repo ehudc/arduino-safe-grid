@@ -1,60 +1,70 @@
 require('dotenv').config({path: './sg.env'});
-var sg = require("./sgmailer.js")
-
+var sg = require("./sgmailer.js");
+// consider using async for callbacks
 // sg code would be here
 
 var arduino = require("johnny-five")
     , board = new arduino.Board()
-    , lcd
-    , lcd_output = null;
+    , lcd_output = null
+    , start = true;
 
-////////////////////
+///////// PANIC SWITCH ///////////
 
 function panicMode(lcd, led) {
     return function sender() {
-        led.on().color("#0000FF");
+        led.blink().color("#0000FF");
         console.log("pressed BLUE");
 
         setTimeout(function() {
-            led.off()
-            lcd.clear().print("Press to send")
-            lcd.cursor(1, 0);
-            lcd.print("a notification")
+            led.stop();
+            lcd.clear().print("Hold to send");
+            lcd.cursor(1, 0).print("a notification");
         }, 1000);
 
         this.removeListener('up', sender);
-        panic(this, function(resp) {
+        panic(this, function(resp, mailedTo) {
             lcd.clear().print(resp);
+            lcd.cursor(1, 0).print(mailedTo);
             setTimeout(function() {
                 lcd.clear();
-            }, 2000);
+            }, 4000);
         });
     };
 }
 
 var panic = function(button, callback){
-    button.on("up", function() {
+    button.once("hold", function() {
+        var emailCaller = null;
+        var smsCaller = null;
+        sg.setText("panic");
         sg.sgObject.send(sg.sendMail(), function(err, json) {
             if (err) {
                 return console.error("Send Failed");
             }
-            callback("Email Sent");
+            emailCaller = "Email Sent";
+            sg.sgObject.send(sg.sendSMS(), function(err, json) {
+                if (err) {
+                    return console.error("Send Failed");
+                }
+                smsCaller = "SMS Sent";
+                callback(emailCaller, smsCaller);
+            });
         });
     });
 };
 
-///////////////////
+///////// HIKER SWITCH ///////////
 
 function hikerMode(lcd, led, board, blue) {
     return function sender() {
-        led.on().color("#FF0000");
+        blue.removeAllListeners();
+        led.blink().color("#FF0000");
         console.log("pressed RED");
 
         setTimeout(function() {
-            led.off()
-            lcd.clear().print("Select a time")
-            lcd.cursor(1, 0);
-            lcd.print("in seconds")
+            led.stop();
+            lcd.clear().print("Select a time");
+            lcd.cursor(1, 0).print("in seconds");
         }, 1000);
 
         this.removeListener('up', sender);
@@ -63,8 +73,10 @@ function hikerMode(lcd, led, board, blue) {
         board.analogRead(5, function(voltage) {
             var value = Math.floor(voltage * 60/1022);
 
-            if (lcd_output == value) {
-                return;
+            if (lcd_output == value || start) {
+                setTimeout(function() {
+                    start = false;
+                }, 4000);
             } else {
                 lcd_output = value;
                 console.log(value);
@@ -77,36 +89,61 @@ function hikerMode(lcd, led, board, blue) {
         });
 
         this.on("up", function() {
-            blue.removeAllListeners();
-            countDown(lcd_output, lcd, led, blue)
+            countDown(lcd_output, lcd, led, blue, function(resp, mailedTo) {
+                lcd.clear().print(resp);
+                lcd.cursor(1, 0).print(mailedTo);
+                setTimeout(function() {
+                    lcd.clear();
+                    led.off();
+                }, 4000);
+            });
         });
     };
 }
 
-var countDown = function(timer, lcd, led, blue){
+var countDown = function(timer, lcd, led, blue, callback){
     var count = timer;
     var counter = setInterval(function() {
         console.log(count);
         lcd.clear().print(count);
 
         blue.on("up", function () {
-            clearInterval(counter)
+            clearInterval(counter);
+            lcd.clear().print("Alert Canceled");
         });
 
         count = count - 1;
         if (count < 0) {
+            var emailCaller = null;
+            var smsCaller = null;
+            sg.setText("hiker");
+            sg.sgObject.send(sg.sendMail(), function(err, json) {
+                if (err) {
+                    return console.error("Send Failed");
+                }
+                emailCaller = "Email Sent";
+                sg.sgObject.send(sg.sendSMS(), function(err, json) {
+                    if (err) {
+                        return console.error("Send Failed");
+                    }
+                    smsCaller = "SMS Sent";
+                    callback(emailCaller, smsCaller);
+                });
+            });
             clearInterval(counter);
             led.on().color("#00FF00");
         }
     }, 1000);
-    led.off();
 };
 
-///////////////////
+///////// MAIN ///////////
 
 board.on("ready", function() {
     var self = this;
-    var BlueButton = new arduino.Button(4).removeAllListeners();
+    var BlueButton = new arduino.Button({
+        pin: 4,
+        holdtime: 2000
+    }).removeAllListeners();
     var RedButton = new arduino.Button(2).removeAllListeners();
 
     var led = new arduino.Led.RGB({
@@ -131,8 +168,7 @@ board.on("ready", function() {
     });
 
     lcd.clear().print("Blue: Panic Mode");
-    lcd.cursor(1, 0);
-    lcd.print("Red: 127 hr Mode")
+    lcd.cursor(1, 0).print("Red: 127 hr Mode")
 
     BlueButton.on("up", panicMode(lcd, led));
 
