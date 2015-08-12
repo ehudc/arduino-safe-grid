@@ -47,6 +47,7 @@ var panic = function(button, callback){
                     return console.error("Send Failed");
                 }
                 smsCaller = "SMS Sent";
+                console.log("messages sent");
                 callback(emailCaller, smsCaller);
             });
         });
@@ -110,6 +111,11 @@ var countDown = function(timer, lcd, led, blue, callback){
         blue.on("up", function () {
             clearInterval(counter);
             lcd.clear().print("Alert Canceled");
+            lcd.cursor(1, 0).print("select or reset time");
+            led.on().color("#FF0000");
+            setTimeout(function() {
+                led.off();
+            }, 1000);
         });
 
         count = count - 1;
@@ -127,6 +133,7 @@ var countDown = function(timer, lcd, led, blue, callback){
                         return console.error("Send Failed");
                     }
                     smsCaller = "SMS Sent";
+                    console.log("messages sent");
                     callback(emailCaller, smsCaller);
                 });
             });
